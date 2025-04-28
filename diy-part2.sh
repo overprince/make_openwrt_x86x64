@@ -11,6 +11,6 @@
 #
 
 # Modify default IP, should be 111 if stable
-sed -i 's/192.168.1.1/192.168.1.111/g' package/base-files/files/bin/config_generate
-sed -i 's/192.168.$((addr_offset++)).1/192.168.$((addr_offset++)).111/g' package/base-files/files/bin/config_generate
-sed -i 's/OpenWrt/OverPrinceWrt/g' package/base-files/files/bin/config_generate
+sed -i 's/192.168.1.1/192.168.1.111/g' package/base-files/luci2/bin/config_generate
+# sed -i 's/192.168.$((addr_offset++)).1/192.168.$((addr_offset++)).111/g' package/base-files/luci2/bin/config_generate
+# sed -i 's/LEDE/OverPrinceWrt/g' package/base-files/luci2/bin/config_generate
