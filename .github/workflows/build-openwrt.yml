@@ -75,12 +75,16 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Install golang
-    - uses: actions/checkout@v5
-    - uses: actions/setup-go@v6
+    - name: Check golang
+      uses: actions/checkout@v5
+
+    - name: Update golang
+      uses: actions/setup-go@v6
       with:
         go-version: 'stable' # Latest stable version
-    - run: go version
+        
+    - name: Run Go version
+      run: go version
 
     - name: Load custom configuration
       run: |
