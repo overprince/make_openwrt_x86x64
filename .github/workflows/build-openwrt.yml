@@ -54,6 +54,17 @@ jobs:
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+        
+    - name: Check golang
+      uses: actions/checkout@v5
+
+    - name: Update golang
+      uses: actions/setup-go@v6
+      with:
+        go-version: 'stable' # Latest stable version
+        
+    - name: Run Go version
+      run: go version
 
     - name: Clone source code
       working-directory: /workdir
@@ -74,17 +85,6 @@ jobs:
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
-
-    - name: Check golang
-      uses: actions/checkout@v5
-
-    - name: Update golang
-      uses: actions/setup-go@v6
-      with:
-        go-version: 'stable' # Latest stable version
-        
-    - name: Run Go version
-      run: go version
 
     - name: Load custom configuration
       run: |
