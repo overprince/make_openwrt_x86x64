@@ -76,10 +76,11 @@ jobs:
       run: cd openwrt && ./scripts/feeds install -a
 
     - name: Install golang
-      run: |
-        cd openwrt
-        rm -rf feeds/packages/lang/golang
-        git clone https://github.com/sbwml/packages_lang_golang -b 24.x feeds/packages/lang/golang
+    - uses: actions/checkout@v5
+    - uses: actions/setup-go@v6
+      with:
+        go-version: 'stable' # Latest stable version
+    - run: go version
 
     - name: Load custom configuration
       run: |
