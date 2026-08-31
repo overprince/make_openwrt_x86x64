@@ -1,0 +1,131 @@
+name: Delete old releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      cutoff:
+        description: 'Cutoff date (YYYY-MM-DD). Releases published BEFORE this date will be deleted.'
+        required: true
+        default: '2026-08-07'
+      delete_tags:
+        description: 'Whether to also delete the associated git tags (true/false). Deleting tags is destructive.'
+        required: true
+        default: 'true'
+      dry_run:
+        description: 'If true, the workflow only lists/releases to be deleted and exits without deleting.'
+        required: true
+        default: 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  delete-old-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Backup and (optionally) delete releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUTOFF_INPUT: ${{ github.event.inputs.cutoff }}
+          DELETE_TAGS_INPUT: ${{ github.event.inputs.delete_tags }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Inputs: cutoff=${CUTOFF_INPUT}, delete_tags=${DELETE_TAGS_INPUT}, dry_run=${DRY_RUN_INPUT}"
+
+          OWNER=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
+          REPO=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
+          TIMESTAMP=$(date -u +"%Y%m%dT%H%M%SZ")
+          OUTFILE="releases-backup-${TIMESTAMP}.json"
+
+          echo "Backing up all releases to $OUTFILE"
+          echo '[' > "$OUTFILE"
+          PAGE=1
+          FIRST=true
+          while :; do
+            RESP=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${OWNER}/${REPO}/releases?per_page=100&page=${PAGE}")
+            LEN=$(echo "$RESP" | jq 'length')
+            if [ "$LEN" -eq 0 ]; then
+              break
+            fi
+            for i in $(seq 0 $((LEN - 1))); do
+              ITEM=$(echo "$RESP" | jq -c ".[$i]")
+              if $FIRST; then
+                echo "$ITEM" >> "$OUTFILE"
+                FIRST=false
+              else
+                echo "," >> "$OUTFILE"
+                echo "$ITEM" >> "$OUTFILE"
+              fi
+            done
+            PAGE=$((PAGE + 1))
+          done
+          echo ']' >> "$OUTFILE"
+          echo "Backup written: $OUTFILE"
+
+          echo "Uploading backup as artifact"
+          echo "::set-output name=backup_file::$OUTFILE" || true
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: releases-backup
+          path: releases-backup-*.json
+
+      - name: Find releases older than cutoff and delete (respecting dry-run)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUTOFF_INPUT: ${{ github.event.inputs.cutoff }}
+          DELETE_TAGS_INPUT: ${{ github.event.inputs.delete_tags }}
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          OWNER=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
+          REPO=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
+          CUToff_ISO="${CUTOFF_INPUT}T00:00:00Z"
+
+          echo "Cutoff (ISO): $CUToff_ISO"
+
+          FILE=$(ls releases-backup-*.json | head -n1)
+          if [ -z "${FILE:-}" ]; then
+            echo "Backup file not found; aborting"
+            exit 1
+          fi
+
+          CANDIDATES=$(jq -c --arg cutoff "$CUToff_ISO" '.[] | select(.published_at != null and .published_at < $cutoff) | {id: .id, tag_name: .tag_name, published_at: .published_at, name: .name}' "$FILE" ) || true
+
+          if [ -z "$CANDIDATES" ] || [ "$CANDIDATES" = "null" ]; then
+            echo "No releases found before ${CUTOFF_INPUT}"
+            exit 0
+          fi
+
+          echo "Releases to be deleted (id tag published_at name):"
+          echo "$CANDIDATES" | jq -r '. | "\(.id) \(.tag_name) \(.published_at) \(.name)"'
+
+          if [ "${DRY_RUN_INPUT,,}" = "true" ] || [ "${DRY_RUN_INPUT,,}" = "1" ]; then
+            echo "Dry run is enabled — no deletions performed. To delete, re-run and set dry_run=false."
+            exit 0
+          fi
+
+          echo "$CANDIDATES" | jq -c '.' | while read -r item; do
+            ID=$(echo "$item" | jq -r '.id')
+            TAG=$(echo "$item" | jq -r '.tag_name')
+            NAME=$(echo "$item" | jq -r '.name')
+            PUBLISHED_AT=$(echo "$item" | jq -r '.published_at')
+
+            echo "Deleting release id=$ID tag=$TAG published_at=$PUBLISHED_AT name=$NAME"
+            DEL_RESP=$(curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${OWNER}/${REPO}/releases/${ID}")
+            echo "Release delete response length: $(echo -n "$DEL_RESP" | wc -c)"
+
+            if [ "${DELETE_TAGS_INPUT,,}" = "true" ] || [ "${DELETE_TAGS_INPUT,,}" = "1" ]; then
+              echo "Attempting to delete git tag: $TAG"
+              curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/${OWNER}/${REPO}/git/refs/tags/${TAG}" || echo "Deleting tag ${TAG} failed or tag did not exist"
+            fi
+          done
